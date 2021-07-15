@@ -39,18 +39,26 @@ class CarController:
         self.track = track  # Track waypoints for drawing
 
         # Control with common-road models
-        self.predictior = predictor
+        self.predictor = predictor
         # self.parameters = parameters_vehicle1()
         self.parameters = parameters_vehicle2()
         self.tEulerStep = T_EULER_STEP  # [s] One step of solving the ODEINT or EULER
 
         # Control with neural network
-        if predictor == "nn":
+        if self.predictor == "nn":
             print("Setting up controller with neural network")
             if model_name is not None:
                 from nn_prediction.prediction import NeuralNetworkPredictor
 
                 self.nn_predictor = NeuralNetworkPredictor(model_name=model_name)
+            ### end if
+        elif self.predictor == 'rnn':
+            print('Setting up controller with recurrent neural network')
+            if model_name is not None:
+                from nn_prediction.prediction import RecurrentNeuralNetworkPredictor
+                self.nn_predictor = RecurrentNeuralNetworkPredictor(model_name=model_name)
+            ### end if model_name is not None
+        ### end if
 
         # MPPI data
         self.simulated_history = []  # Hostory of simulated car states
@@ -72,6 +80,7 @@ class CarController:
         self.car_state[4] = self.car_state[4] % 6.28
         if self.car_state[4] > 3.14: 
             self.car_state[4] = self.car_state[4] - 6.28
+
 
     def update_trackline(self):
         # only Next NUMBER_OF_NEXT_WAYPOINTS points of the track
@@ -114,11 +123,11 @@ class CarController:
     def simulate_step(self, state, control_input):
         t = np.arange(0, self.tControlSequence, self.tEulerStep)
 
-        if self.predictior == "euler":
+        if self.predictor == "euler":
             x_next = solveEuler(
                 self.car_dynamics, state, t, args=(control_input, self.parameters)
             )[-1]
-        elif self.predictior == "odeint":
+        elif self.predictor == "odeint":
             x_next = odeint(
                 self.car_dynamics, state, t, args=(control_input, self.parameters)
             )[-1]
@@ -406,7 +415,7 @@ class CarController:
         )
         # control_sequences = u_dist #those are the handcrafted inputs
 
-        if self.predictior == "nn":
+        if self.predictor == "nn":
             simulated_history, costs = self.simulate_trajectory_distribution_nn(
                 control_sequences
             )
@@ -448,6 +457,10 @@ class CarController:
         next_control_sequence = best_conrol_sequence
         self.best_control_sequenct = next_control_sequence
         return next_control_sequence
+
+    def update_history(self, state, control_inputs):
+        if self.predictor == 'rnn':
+            self.nn_predictor.update_history(state, control_inputs)
 
     """
     draws the simulated history (position and speed) of the car into a plot for a trajectory distribution resp. the history of all trajectory distributions
