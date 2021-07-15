@@ -1,8 +1,9 @@
 import os
 import numpy as np
-from keras.models import Model, Sequential
-from keras.layers import Dense
-from tensorflow import keras
+import tensorflow as tf
+# from tensorflow import keras
+from tensorflow.keras.models import Model, Sequential, load_model
+from tensorflow.keras.layers import Dense
 from sklearn import preprocessing
 import joblib
 import matplotlib.pyplot as plt
@@ -10,7 +11,8 @@ from globals import *
 import json
 import time
 
-from nn_prediction.training.train import train_network
+# from nn_prediction.training.train import train_network
+from nn_prediction.training.train_sequential import train_network
 
 
 class NeuralNetworkPredictor:
@@ -32,7 +34,7 @@ class NeuralNetworkPredictor:
             print("Model {} does not exist. Please train first".format(self.model_name))
             # train_network()
 
-        self.model = keras.models.load_model(model_path)
+        self.model = load_model(model_path)
         self.scaler_x = joblib.load(scaler_x_path) 
         self.scaler_y = joblib.load(scaler_y_path) 
         with open(nn_settings_path, 'r') as openfile:
@@ -112,6 +114,84 @@ class NeuralNetworkPredictor:
         
         return predictions
 
+class RecurrentNeuralNetworkPredictor(NeuralNetworkPredictor):
+
+    def __init__(self, model_name = MODEL_NAME, num_history_steps=5):
+        super().__init__(model_name=model_name)
+        self.num_history_steps = num_history_steps
+        self.history = np.zeros((self.num_history_steps-1, 9))
+        
+
+    def convert_state_angles(self, control_state_input):
+        '''
+        Rescale to change from degrees to radians.
+        l2race-lite uses radians, 
+        l2race uses degrees.
+        The network was trained on l2race data
+        '''
+        state_deg = np.copy(control_state_input)
+        deg_idxs = [4,6,7,8]
+        for i in deg_idxs:
+            state_deg[i] = np.rad2deg(state_deg[i])
+        return state_deg
+
+    def update_history(self, state, control_input):
+        # Append <controls | states>, filling in missing elements
+        padded_ctrl = np.zeros((4,))
+        padded_ctrl[:2] = control_input
+        # Convert data to units the network uses.
+        control_state_input = self.convert_state_angles(np.append(padded_ctrl, state[2:]))
+        self.history[:-1,:] = self.history[1:,:]
+        self.history[-1,:] = control_state_input
+
+
+    def predict_next_state(self, state, control_input):
+        '''
+        state numpy array (s_x, s_y, steering_angle, speed, yaw_angle, yaw_rate, slip_angle)
+        control_input numpy array (steering rate, acceleration)
+        '''
+        assert not self.history is None, f'Need to set a history before making predictions'
+        # Our network expects (steering rate, accel, breaking, dir)
+        padded_ctrl = np.zeros((4,))
+        # Append <controls | states>, filling in missing elements
+        padded_ctrl[:2] = control_input
+        # Convert data to units the network uses.
+#         control_state_input = self.convert_state_angles(np.column_stack((padded_ctrl, state)))
+        control_state_input = self.convert_state_angles(np.append(padded_ctrl, state[2:]))
+        # Place the latest input into the prediction window.
+        in_data = np.vstack((self.history, control_state_input))
+        # Feed into the neural network.
+
+
+        if(self.normalize_data):
+            # Normalize input
+            state_and_control_normalized = self.scaler_x.transform(in_data)
+            # Predict
+            predictions_normalized = self.model.predict_step(np.array([state_and_control_normalized]))
+            # Denormalize results
+            prediction = self.scaler_y.inverse_transform(predictions_normalized)[0]
+
+        else:
+            prediction = self.model.predict([state_and_control.tolist()])
+
+        
+        if self.predict_delta:
+            prediction = state + prediction
+
+        return prediction
+        pass
+
+    def predict_multiple_states(self, states, control_inputs):
+        '''
+        Takes an N x 7 array of states and N x 2 array of control_inputs and predicts 
+        N x 
+        '''
+        assert not self.history is None, f'Need to set a history before making predictions'
+        pass
+
+    def predict_multiple_trajectories(self, states, control_inputs):
+        raise NotImplementedError('l2race-lite mppi_mpc does not require predict_multiple_trajectories')
+        pass
 
 if __name__ == '__main__':
 

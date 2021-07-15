@@ -1,6 +1,6 @@
 import numpy as np
 from tensorflow.keras.models import Sequential
-from tensorflow.keras.layers import Dense
+from tensorflow.keras.layers import Dense, LSTM
 from tensorflow import keras
 from sklearn import preprocessing
 import joblib
@@ -10,10 +10,13 @@ from nn_prediction.training.util import *
 import json
 
 
-def input_output_split(data, num_history_steps, in_cols, out_cols, fraction_training=0.9):
+def input_output_split(data, num_history_steps, in_cols, out_cols, fraction_training=0.9, pred_delta=True, scalers=None):
     '''
     TODO: Filter out resets.
     '''
+    if not pred_delta:
+        raise NotImplementedError('Not currently implementing prediction of next state')
+
     num_rows, num_cols = data.shape
     train_split = int(fraction_training * num_rows)
     num_train_batches = train_split - num_history_steps
@@ -32,13 +35,16 @@ def input_output_split(data, num_history_steps, in_cols, out_cols, fraction_trai
                     
 
     for i in range(num_history_steps,train_split-1):
-        batch_data = data[i-num_history_steps:i,in_cols]
-        train_xs[i-num_history_steps,:,:] = batch_data
-        train_ys[i-num_history_steps,:,:] = data[i+1,out_cols] - data[i,out_cols]
+        xs = data[i-num_history_steps:i,in_cols]
+        ys = data[i+1,out_cols] - data[i,out_cols]
+        train_xs[i-num_history_steps,:,:] = xs if scalers is None else scalers['x'].transform(xs)
+        train_ys[i-num_history_steps,:,:] = ys if scalers is None else scalers['y'].transform(ys.reshape(-1,1).T)
 
     for i in range(train_split,num_rows-1):
-        test_xs[i-train_split,:,:] = data[i-num_history_steps:i,in_cols]
-        test_ys[i-train_split,:,:] = data[i+1,out_cols] - data[i,out_cols]
+        xs = data[i-num_history_steps:i,in_cols]
+        ys = data[i+1,out_cols] - data[i,out_cols]
+        test_xs[i-train_split,:,:] = xs if scalers is None else scalers['x'].transform(xs)
+        test_ys[i-train_split,:,:] = ys if scalers is None else scalers['y'].transform(ys.reshape(-1,1).T)
 
 
     return train_xs, train_ys, test_xs, test_ys
@@ -83,84 +89,62 @@ def train_network():
     # 16: drift_angle_deg
 #     train_data = np.loadtxt(f'nn_prediction/training_data/{}'.format(TRAINING_DATA_FILE), delimiter=',')
     raw_data = np.loadtxt(f'nn_prediction/training_data/{TRAINING_DATA_FILE}', delimiter=',')
-    # filter out reverse
-    in_cols = [4,6,7,8,9,10,11,12,13,14,15,16]
-    out_cols = [2,3,4,6,7,8,9,10,11,12,13,14,15,16]
+    (total_rows, total_cols) = raw_data.shape
+    assert int(total_rows) * 0.1 > NUMBER_OF_NEXT_WAYPOINTS, f'10% of data smaller than prediction window'
 
-    train_xs, train_ys, test_xs, test_ys = input_output_split(raw_data, 5, in_cols, out_cols)
+    # filter out reverse
+    # Default Tobi column ordering
+#     in_cols = [2,3,4,5,8,9,10,11,12,13,14,15,16]
+#     out_cols = [6,7,8,9,10,11,12,13,14,15,16]
+    # Column ordering for l2 race
+    in_cols = [2,3,4,5,13,10,14,15,16]
+    out_cols = [6,7,13,10,14,15,16]
+
+    # Normalize data
+    scalers = None
+    if NORMALITE_DATA:
+        scaler_x = preprocessing.MinMaxScaler().fit(raw_data[:,in_cols])
+        scaler_y = preprocessing.MinMaxScaler().fit(raw_data[:,out_cols])
+        scalers = {'x':scaler_x, 'y':scaler_y}
+
+    train_xs, train_ys, test_xs, test_ys = input_output_split(raw_data, 5, in_cols, out_cols, pred_delta=PREDICT_DELTA, scalers=scalers)
     print('train xs shape: ', train_xs.shape)
     print('train ys shape: ', train_ys.shape)
     print('test xs shape: ', test_xs.shape)
     print('test ys shape: ', test_ys.shape)
-    exit()
-    non_reverse = raw_data[raw_data[:,5] == 0]
-    non_reverse = non_reverse[:, data_cols]  
-    (total_rows, total_cols) = non_reverse.shape
-
-    assert int(total_rows) * 0.1 > NUMBER_OF_NEXT_WAYPOINTS, f'10% of data smaller than prediction window'
-
-    train_data = non_reverse[:int(total_rows * 0.9) + NUMBER_OF_NEXT_WAYPOINTS + 1,:]
-    validation_data = non_reverse[int(total_rows * 0.9) - NUMBER_OF_NEXT_WAYPOINTS - 1:,:]
-    print("train_data.shape", train_data.shape)
-    
-
-    # split into input (X) and output (y) variables
-    #x1,x2,x3,x4,x5,x6,x7,u1,u2,
-    x = train_data[:,1:10]
-    #x1n,x2n,x3n,x4n,x5n,x6n,x7n
-    y = train_data[:,10:]
-
-
-
-
-    #time, x1,x2,x3,x4,x5,x6,x7,u1,u2
-#     validation_data = np.loadtxt('ExperimentRecordings/Dataset-1/Test/Test.csv{}'.format(""), delimiter=',', skiprows=5)
-    validation_data = validation_data[2:] #remove header
-
-    #x1,x2,x3,x4,x5,x6,x7,u1,u2,
-    x_validation = validation_data[:-1,1:10]
-    #x1n,x2n,x3n,x4n,x5n,x6n,x7n
-    y_validation = validation_data[1:,1:8]
-
-
-    #delta is the difference between state and next_state
-    delta =  y[:] - x[:,:7]
-    delta_validation = y_validation[:] - x_validation[:,:7]
-
-    #if we want to train the network on the state changes instead of the state, use this
-    if PREDICT_DELTA:
-        y = delta
-        y_validation = delta_validation
-
 
     # Augmentation for lots of lots of data
     # x, y = augment_data(x,y)
 
-    # Normalize data
-    scaler_x = preprocessing.MinMaxScaler().fit(x)
-    scaler_y = preprocessing.MinMaxScaler().fit(y)
 
-    if(NORMALITE_DATA):
-        x = scaler_x.transform(x)
-        y = scaler_y.transform(y)
-        x_validation = scaler_x.transform(x_validation)
-        y_validation = scaler_y.transform(y_validation)
+#     if(NORMALITE_DATA):
+#         x = scaler_x.transform(train_xs)
+#         y = scaler_y.transform(train_ys)
+#         x_validation = scaler_x.transform(test_xs)
+#         y_validation = scaler_y.transform(test_ys)
 
 
-    # keras model
+    # keras ff model
+#     model = Sequential()
+#     model.add(Dense(128, input_dim=9, activation='tanh'))
+#     model.add(Dense(128, activation='tanh'))
+#     model.add(Dense(128, activation='tanh'))
+#     model.add(Dense(128, activation='tanh'))
+#     model.add(Dense(7))
+    # RNN model - Marco, put your model here.
+    # Train on batch
     model = Sequential()
-    model.add(Dense(128, input_dim=9, activation='tanh'))
-    model.add(Dense(128, activation='tanh'))
-    model.add(Dense(128, activation='tanh'))
-    model.add(Dense(128, activation='tanh'))
-    model.add(Dense(7))
+    model.add(LSTM(256))
+    model.add(Dense(128, activation='relu'))
+    model.add(Dense(128, activation='relu'))
+    model.add(Dense(len(out_cols)))
 
 
     # compile
     model.compile(loss='mse', optimizer='adam', metrics=['accuracy'])
 
     # fit
-    history = model.fit(x, y, epochs=NUMBER_OF_EPOCHS, batch_size=BATCH_SIZE, shuffle=True, validation_split=0.1,  validation_data=(x_validation, y_validation))
+    history = model.fit(train_xs, train_ys, epochs=NUMBER_OF_EPOCHS, batch_size=BATCH_SIZE, shuffle=True, validation_split=0.1,  validation_data=(test_xs, test_ys))
 
     # Save model and normalization constants
     model_path = 'nn_prediction/models/{}'.format(MODEL_NAME)
@@ -169,8 +153,8 @@ def train_network():
     nn_settings_path = 'nn_prediction/models/{}/nn_settings.json'.format(MODEL_NAME)
 
     model.save(model_path)
-    joblib.dump(scaler_x, scaler_x_path) 
-    joblib.dump(scaler_y, scaler_y_path) 
+    joblib.dump(scalers['x'], scaler_x_path) 
+    joblib.dump(scalers['y'], scaler_y_path) 
     with open(nn_settings_path, "w") as outfile:
         outfile.write(json.dumps(nn_settings))
 
@@ -195,7 +179,7 @@ def train_network():
 
 
     #Evaluate
-    _, accuracy = model.evaluate(x, y)
+    _, accuracy = model.evaluate(train_xs, train_ys)
     print('Accuracy: %.2f' % (accuracy*100))
 
 
