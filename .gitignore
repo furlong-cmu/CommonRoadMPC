@@ -2,6 +2,7 @@
 .vscode/*
 .vscode
 .env
+*.swp
 
 # Python
 __pycache__
