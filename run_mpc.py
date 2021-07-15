@@ -15,7 +15,8 @@ def run_simulation(number_of_steps):
 
     track = Track()
     car = Car(track)
-    car_controller = CarController(track=track, predictor="nn", model_name="Dense-128-128-128-128-uniform-20")
+#     car_controller = CarController(track=track, predictor="nn", model_name="Dense-128-128-128-128-uniform-20")
+    car_controller = CarController(track=track, predictor="rnn", model_name="rnn-test-1")
     # car_controller = CarController(track=track, predictor="euler")
 
     for i in trange(number_of_steps):
@@ -33,6 +34,8 @@ def run_simulation(number_of_steps):
         # Do the first step of the best control sequence
         car.step(next_control_sequence[0])
         car_controller.set_state(car.state)
+        car_controller.update_history(car.state, next_control_sequence[0])
+        ### end if
 
     car.draw_history()
     car.save_history()
