@@ -15,7 +15,7 @@ T_EULER_STEP = 0.01
 
 SIMULATION_LENGTH = 400
 DRAW_LIVE_HISTORY = True
-DRAW_LIVE_ROLLOUTS = False
+DRAW_LIVE_ROLLOUTS = True 
 PATH_TO_EXPERIMENT_RECORDINGS = "./ExperimentRecordings"
 
 
@@ -64,8 +64,9 @@ MAX_COST = 400
 ##########################################
 
 # Training parameters
-MODEL_NAME = "Dense-128-128-128-128-uniform-40-3"
-TRAINING_DATA_FILE = "training_data_uniform_500x500x10.csv"
+MODEL_NAME = "rnn-test-1"
+#TRAINING_DATA_FILE = "training_data_uniform_500x500x10.csv"
+TRAINING_DATA_FILE = "tobi_empty_post_telluride/l2race-tobi-empty-20200924-151939.csv"
 NUMBER_OF_EPOCHS = 40
 BATCH_SIZE = 64
 PREDICT_DELTA = True
